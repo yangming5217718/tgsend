@@ -1,0 +1,45 @@
+spring:
+  mvc:
+    dispatch-options-request: true
+  datasource:
+    url: jdbc:mysql://sg-cdb-8fb34tvl.sql.tencentcdb.com:22974/ftgamedice?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC
+#    url: jdbc:mysql://172.22.0.4:3888/ftgames?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC
+    username: root
+    password: JB66666666xzhan123@db3358
+    driver-class-name: com.mysql.cj.jdbc.Driver   # 建议显式写上
+  data:
+    redis:
+#      host: 172.22.0.6
+#      port: 62325
+      host: gz-crs-8ssynpal.sql.tencentcdb.com
+      port: 20442
+      password: "RR88888888yule123@"
+      database: 0
+      # 如果这个 Redis 实例是 TLS/SSL 端口，再加这一行：
+      # ssl: true
+      lettuce:
+        pool:
+          max-idle: 16
+          max-active: 32
+          min-idle: 8
+bot:
+  config:
+    bot_user_name: lindarkBot
+    bot_token: 6947332073:AAEv2FWNDqHg4MleXWP1CXYLG4_TKBL2B-Q
+    bot2_user_name: lindarktest_bot
+    bot2_token: 8417646289:AAEoRkI4tnjRkS--fEjvuItStJLcHCw7iFk
+app:
+  redis:
+    streams:
+      updates: tg:updates
+      outbound: tg:outbound
+    groups:
+      worker: tg:workers
+      sender: tg:senders
+    pendingIdleMs: 60000
+    pendingScanBatch: 200
+    maxDeliveries: 5
+  rate:
+    messagesPerSecond: 28
+server:
+  port: 9999

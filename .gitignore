@@ -1,0 +1,18 @@
+# Maven
+target/
+
+# IDEA
+.idea/
+*.iml
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# Logs
+logs/
+
+# Environment
+application-*.yml
+*.env
