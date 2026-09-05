@@ -34,7 +34,7 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.tele.common.KeyboardUtil;
-import com.tele.common.MarkdownV2Util;
+import com.tele.common.TgTextUtil;
 import com.tele.common.RedisSlidingWindowRateLimiter;
 import com.tele.common.Utils;
 import com.tele.entity.CpBotmessageSendUser;
@@ -74,7 +74,7 @@ public class OutboundSender {
     private static final int TG_CAPTION_MAX = 1024;
     private static final int TG_TEXT_MAX = 4096;
 
-    private static final String PARSE_MODE = "MarkdownV2";
+    /** 行上 parsemode 为空时的兜底，与 TgTextUtil.DEFAULT_PARSE_MODE 同值 */
 
     // ===================== 格式/常量 =====================
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
@@ -153,7 +153,7 @@ public class OutboundSender {
                 + " 图片最大字节=" + IMG_MAX_BYTES
                 + " 图片缓存小时=" + IMG_CACHE_HOURS
                 + " 图片临时目录=" + IMG_TEMP_DIR
-                + " 解析模式=" + PARSE_MODE);
+                + " 默认解析模式=" + TgTextUtil.DEFAULT_PARSE_MODE);
     }
 
     @PreDestroy
@@ -256,6 +256,7 @@ public class OutboundSender {
                     row.getImgsrc(),
                     row.getContent(),
                     row.getButtontext(),
+                    row.getParsemode(),
                     row.getMsgid(),
                     row.getExptime(),
                     IDEM_S_MAIN,
@@ -412,6 +413,7 @@ public class OutboundSender {
             String img,
             String content,
             String buttontext,
+            String parsemodeRaw,
             String msgid,
             String exptime,
             String idemPrefix,
@@ -482,6 +484,13 @@ public class OutboundSender {
             return;
         }
 
+        /*
+         * parse mode 由行上的 parsemode 决定，转义随之分派。
+         * 两者必须一起取——列填了 HTML 却按 MarkdownV2 转义的话，
+         * & < > 没转、. - 全被加反斜杠，而且不报错。
+         */
+        final String parseMode = TgTextUtil.normalizeMode(parsemodeRaw);
+
         final boolean hasImg = img != null && !img.isEmpty();
 
         final boolean hasButton =
@@ -517,14 +526,14 @@ public class OutboundSender {
 
             if (hasImg) {
 
-                String cap = normalizeAndEscapeForMarkdownV2(content, TG_CAPTION_MAX);
+                String cap = normalizeAndEscapeFor(content, TG_CAPTION_MAX, parseMode);
 
                 if (isGif(img)) {
                     // GIF 动图用 SendAnimation
                     SendAnimation req = new SendAnimation(chatid, new InputFile(img));
 
                     if (!cap.isEmpty()) req.setCaption(cap);
-                    req.setParseMode(PARSE_MODE);
+                    req.setParseMode(parseMode);
 
                     if (replyMarkup != null) {
                         req.setReplyMarkup(replyMarkup);
@@ -565,7 +574,7 @@ public class OutboundSender {
                     SendPhoto req = new SendPhoto(chatid, new InputFile(img));
 
                     if (!cap.isEmpty()) req.setCaption(cap);
-                    req.setParseMode(PARSE_MODE);
+                    req.setParseMode(parseMode);
 
                     if (replyMarkup != null) {
                         req.setReplyMarkup(replyMarkup);
@@ -603,10 +612,10 @@ public class OutboundSender {
                 }
 
             } else {
-                String txt = normalizeAndEscapeForMarkdownV2(content, TG_TEXT_MAX);
+                String txt = normalizeAndEscapeFor(content, TG_TEXT_MAX, parseMode);
 
                 SendMessage req = new SendMessage(chatid, txt);
-                req.setParseMode(PARSE_MODE);
+                req.setParseMode(parseMode);
                 req.setDisableWebPagePreview(true);
 
                 if (replyMarkup != null) {
@@ -802,9 +811,9 @@ public class OutboundSender {
 
 
     // ========== MarkdownV2 ==========
-    /** 实现在 {@link MarkdownV2Util}，与 MsgUpdateStreamWorker 编辑路径共用同一份 */
-    private static String normalizeAndEscapeForMarkdownV2(String s, int maxLen) {
-        return MarkdownV2Util.normalizeAndEscape(s, maxLen);
+    /** 实现在 {@link TgTextUtil}，与 MsgUpdateStreamWorker 编辑路径共用同一份 */
+    private static String normalizeAndEscapeFor(String s, int maxLen, String parseMode) {
+        return TgTextUtil.normalizeAndEscape(s, maxLen, parseMode);
     }
 
     // ========== 抢占发送 ==========

@@ -30,7 +30,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMa
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import com.tele.common.KeyboardUtil;
-import com.tele.common.MarkdownV2Util;
+import com.tele.common.TgTextUtil;
 import com.tele.common.RedisSlidingWindowRateLimiter;
 import com.tele.common.Utils;
 import com.tele.mybots.router.TelegramFacade;
@@ -310,11 +310,17 @@ public class MsgUpdateStreamWorker {
                  * 而金额和时间里必然带。
                  *
                  * caption 和 text 的长度上限不同，各自按各自的截。
+                 *
+                 * parse mode 这里只能用默认值：事件里只有 chatid/msgid，
+                 * 拿不到 cp_botmessage_send_user 那一行。要读到行上的 parsemode
+                 * 得按 (chatid, sendid) 回查，而 sendid 现在全表为空——
+                 * 出站恢复、sendid 真的落库之后再补这一步。
                  */
-                String safeCaption = MarkdownV2Util.normalizeAndEscape(
-                        content, MarkdownV2Util.TG_CAPTION_MAX);
-                String safeText = MarkdownV2Util.normalizeAndEscape(
-                        content, MarkdownV2Util.TG_TEXT_MAX);
+                String editParseMode = TgTextUtil.DEFAULT_PARSE_MODE;
+                String safeCaption = TgTextUtil.normalizeAndEscape(
+                        content, TgTextUtil.TG_CAPTION_MAX, editParseMode);
+                String safeText = TgTextUtil.normalizeAndEscape(
+                        content, TgTextUtil.TG_TEXT_MAX, editParseMode);
 
                 acquireRateToken();
                 try {
