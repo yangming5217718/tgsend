@@ -22,7 +22,6 @@ import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
-import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageCaption;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
@@ -33,6 +32,8 @@ import com.tele.common.KeyboardUtil;
 import com.tele.common.TgTextUtil;
 import com.tele.common.RedisSlidingWindowRateLimiter;
 import com.tele.common.Utils;
+import com.tele.entity.CpBotmessageSendUser;
+import com.tele.mapper.CpBotmessageSendUserMapper;
 import com.tele.mybots.router.TelegramFacade;
 
 import jakarta.annotation.PostConstruct;
@@ -76,6 +77,10 @@ public class MsgUpdateStreamWorker {
 
     @Autowired
     private RedisSlidingWindowRateLimiter limiter;
+
+    /** 按 (chatid, sendid) 回查原始行，取 parsemode 和当初发出去的 buttontext */
+    @Autowired
+    private CpBotmessageSendUserMapper sendUserMapper;
 
     @Value("${app.msg.update.stream:" + DEFAULT_STREAM + "}")
     private String updateStream;
@@ -249,6 +254,81 @@ public class MsgUpdateStreamWorker {
         log("loop end consumer=" + consumerName);
     }
 
+
+    // ==========================================================
+    // buttontext 三态
+    // ==========================================================
+    /**
+     * 事件里 buttontext 表达的三种意图，与 {@code InlineUpdateStreamWorker} 保持一致。
+     * <p>
+     * 以前空串和「清空」共用同一种表达，而两者的正确行为正好相反：
+     * Telegram 的 editMessage* 只要不带 {@code reply_markup} 就等于<b>把键盘删掉</b>，
+     * 不是「保持原样」。于是「上游没提按钮」被执行成了「上游要求删掉按钮」，
+     * 而删键盘是一次合法编辑，返回 200，日志记的是成功。
+     * <p>
+     * 这条链路比 inline 更容易踩：文案没变化时会单独发一次
+     * {@code EditMessageReplyMarkup}，markup 为 null 就是一次纯粹的删键盘请求。
+     */
+    private enum MarkupMode {
+        /** 空 / 缺失 / 解析失败：本次不改按钮 */
+        KEEP,
+        /** 显式传 [] 或 [[]]：真的要清空 */
+        CLEAR,
+        /** 正常 JSON：换成这套 */
+        SET
+    }
+
+    private record MarkupDecision(MarkupMode mode, InlineKeyboardMarkup markup) {
+    }
+
+    /**
+     * 判定必须做在 {@link KeyboardUtil#createUserKeyboard} 之外。
+     * 那个方法对空串和 {@code []} 都返回 null，到 markup 这一层两者已经分不出来了。
+     */
+    private MarkupDecision decideMarkup(String buttontext, String trace, String rid) {
+        if (StringUtils.isBlank(buttontext)) {
+            return new MarkupDecision(MarkupMode.KEEP, null);
+        }
+
+        String trimmed = buttontext.trim();
+        if ("[]".equals(trimmed) || "[[]]".equals(trimmed)) {
+            log(trace, "按钮显式清空 rid=" + rid + " buttontext=" + trimmed);
+            return new MarkupDecision(MarkupMode.CLEAR, null);
+        }
+
+        InlineKeyboardMarkup markup;
+        try {
+            markup = KeyboardUtil.createUserKeyboard(buttontext);
+        } catch (Exception e) {
+            /*
+             * 解析不了就当成「不改按钮」。原来是 markup 保持 null，等于静默降级成
+             * 清空键盘——一个格式错误换来这条消息的按钮全没，代价太大。
+             */
+            log(trace, "keyboard parse fail，本次不改按钮 rid=" + rid + " err=" + e.getMessage());
+            return new MarkupDecision(MarkupMode.KEEP, null);
+        }
+
+        if (markup == null) {
+            log(trace, "按钮串没有有效按钮，本次不改按钮 rid=" + rid);
+            return new MarkupDecision(MarkupMode.KEEP, null);
+        }
+
+        return new MarkupDecision(MarkupMode.SET, markup);
+    }
+
+    /** 只做解析，失败返回 null；给 KEEP 分支重建原键盘用 */
+    private InlineKeyboardMarkup parseKeyboard(String buttontext, String trace, String rid) {
+        if (StringUtils.isBlank(buttontext)) {
+            return null;
+        }
+        try {
+            return KeyboardUtil.createUserKeyboard(buttontext);
+        } catch (Exception e) {
+            log(trace, "重建原键盘失败 rid=" + rid + " err=" + e.getMessage());
+            return null;
+        }
+    }
+
     // ==========================================================
     // 单条处理
     // ==========================================================
@@ -285,13 +365,47 @@ public class MsgUpdateStreamWorker {
 
             Integer msgId = Integer.valueOf(msgIdStr);
 
-            InlineKeyboardMarkup markup = null;
+            /*
+             * 回查原始行，拿 parsemode 和当初发出去的 buttontext。
+             *
+             * 事件里的 msgid 是「要编辑哪条消息」，对应表上的 sendid 列，
+             * 不是同名的 msgid 列（那个是回复目标）。查错列不会报错，
+             * 只会永远查不到、一路走兜底，看起来一切正常。
+             *
+             * 查不到是正常情况：发失败的行没有 sendid，消息也可能由别的系统发出。
+             */
+            CpBotmessageSendUser origin = null;
             try {
-                if (StringUtils.isNotBlank(buttontext)) {
-                    markup = KeyboardUtil.createUserKeyboard(buttontext);
-                }
+                origin = sendUserMapper.selectByChatIdAndSendId(chatId, msgIdStr);
             } catch (Exception e) {
-                log(trace, "keyboard parse fail rid=" + rid + " err=" + e.getMessage());
+                log(trace, "origin lookup fail rid=" + rid + " err=" + e.getMessage());
+            }
+            log(trace, "origin " + (origin == null ? "not found" : "id=" + origin.getId()
+                    + " parsemode=" + origin.getParsemode()
+                    + " hasButton=" + StringUtils.isNotBlank(origin.getButtontext())));
+
+            MarkupDecision decision = decideMarkup(buttontext, trace, rid);
+
+            InlineKeyboardMarkup markup;
+            if (decision.mode() == MarkupMode.KEEP) {
+                /*
+                 * KEEP = 本次不改按钮。但 Telegram 的 editMessage* 只要不带
+                 * reply_markup 就等于把键盘删掉，没有「保持原样」这个选项。
+                 * 所以必须拿原始 buttontext 重建一份原样发回去。
+                 */
+                if (origin == null) {
+                    /*
+                     * 重建不出来，只有两条路：照常编辑（文案更新，按钮悄悄没了，
+                     * 日志还记成功），或者跳过。选跳过——看得见的故障比看不见的好。
+                     */
+                    log(trace, "SKIP 无法重建按钮：buttontext 为空且回查不到原始行"
+                            + " rid=" + rid + " chatid=" + chatId + " msgid=" + msgIdStr);
+                    ackAndDelete(r);
+                    return;
+                }
+                markup = parseKeyboard(origin.getButtontext(), trace, rid);
+            } else {
+                markup = decision.markup();
             }
 
             boolean editedText = false;
@@ -311,12 +425,18 @@ public class MsgUpdateStreamWorker {
                  *
                  * caption 和 text 的长度上限不同，各自按各自的截。
                  *
-                 * parse mode 这里只能用默认值：事件里只有 chatid/msgid，
-                 * 拿不到 cp_botmessage_send_user 那一行。要读到行上的 parsemode
-                 * 得按 (chatid, sendid) 回查，而 sendid 现在全表为空——
-                 * 出站恢复、sendid 真的落库之后再补这一步。
+                 * parse mode 取回查到的行上的值，与发送时用的是同一个字段——
+                 * 两边取值不同的话，同一段文案发得出去却编辑不了。
+                 * 回查不到就走默认值，不因为拿不到 parsemode 而放弃编辑。
+                 *
+                 * 这个值同时决定两件事：怎么转义，以及告诉 Telegram 按什么解析。
+                 * 两者必须用同一个变量——按 legacy 不转义却声明 MarkdownV2，
+                 * 文案里一个 = 就 400。默认值恰好等于 MarkdownV2 时看不出来，
+                 * 一旦某行填了别的值立刻暴露。
                  */
-                String editParseMode = TgTextUtil.DEFAULT_PARSE_MODE;
+                String editParseMode = origin == null || StringUtils.isBlank(origin.getParsemode())
+                        ? TgTextUtil.DEFAULT_PARSE_MODE
+                        : origin.getParsemode().trim();
                 String safeCaption = TgTextUtil.normalizeAndEscape(
                         content, TgTextUtil.TG_CAPTION_MAX, editParseMode);
                 String safeText = TgTextUtil.normalizeAndEscape(
@@ -328,7 +448,7 @@ public class MsgUpdateStreamWorker {
                             .chatId(chatId)
                             .messageId(msgId)
                             .caption(safeCaption)
-                            .parseMode(ParseMode.MARKDOWNV2)
+                            .parseMode(editParseMode)
                             .replyMarkup(markup)
                             .build();
 
@@ -359,7 +479,7 @@ public class MsgUpdateStreamWorker {
                                 .chatId(chatId)
                                 .messageId(msgId)
                                 .text(safeText)
-                                .parseMode(ParseMode.MARKDOWNV2)
+                                .parseMode(editParseMode)
                                 .replyMarkup(markup)
                                 .build();
 
