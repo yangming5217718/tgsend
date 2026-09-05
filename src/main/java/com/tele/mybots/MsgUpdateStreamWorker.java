@@ -22,7 +22,6 @@ import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
-import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageCaption;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
@@ -429,6 +428,11 @@ public class MsgUpdateStreamWorker {
                  * parse mode 取回查到的行上的值，与发送时用的是同一个字段——
                  * 两边取值不同的话，同一段文案发得出去却编辑不了。
                  * 回查不到就走默认值，不因为拿不到 parsemode 而放弃编辑。
+                 *
+                 * 这个值同时决定两件事：怎么转义，以及告诉 Telegram 按什么解析。
+                 * 两者必须用同一个变量——按 legacy 不转义却声明 MarkdownV2，
+                 * 文案里一个 = 就 400。默认值恰好等于 MarkdownV2 时看不出来，
+                 * 一旦某行填了别的值立刻暴露。
                  */
                 String editParseMode = origin == null || StringUtils.isBlank(origin.getParsemode())
                         ? TgTextUtil.DEFAULT_PARSE_MODE
@@ -444,7 +448,7 @@ public class MsgUpdateStreamWorker {
                             .chatId(chatId)
                             .messageId(msgId)
                             .caption(safeCaption)
-                            .parseMode(ParseMode.MARKDOWNV2)
+                            .parseMode(editParseMode)
                             .replyMarkup(markup)
                             .build();
 
@@ -475,7 +479,7 @@ public class MsgUpdateStreamWorker {
                                 .chatId(chatId)
                                 .messageId(msgId)
                                 .text(safeText)
-                                .parseMode(ParseMode.MARKDOWNV2)
+                                .parseMode(editParseMode)
                                 .replyMarkup(markup)
                                 .build();
 
