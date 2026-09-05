@@ -17,7 +17,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.connection.stream.StreamRecords;
@@ -32,20 +31,20 @@ import jakarta.annotation.PreDestroy;
 /**
  * 用 long polling（getUpdates）拉取 update，塞进和 webhook 同一条 {@code tg:updates} 流。
  * <p>
- * <b>默认关闭</b>，只有显式配 {@code app.polling.enabled=true} 才会注册这个 Bean。
+ * <b>这是本服务默认且唯一的入站方式，没有开关。</b>webhook 要求公网 HTTPS
+ * （端口只能 443/80/88/8443），而本服务是裸 HTTP 9999、机器上没有 TLS 终结、
+ * 入站端口还被防火墙挡着——三条里任何一条都足以让 webhook 走不通。getUpdates 是
+ * <b>出站拉取</b>，一个公网入口都不需要。
  * <p>
- * 为什么需要它：webhook 要求公网 HTTPS（端口只能 443/80/88/8443），而本服务
- * 是裸 HTTP 9999、机器上没有 TLS 终结、入站端口也被防火墙挡着。getUpdates 是
- * <b>出站拉取</b>，一个公网入口都不需要，联调时零基础设施改动。
+ * 一个 bot 只能二选一：给这个 bot 设了 webhook 就不能 getUpdates，Telegram 返回
+ * <b>409</b>。所以换 bot 之前先确认它没有 webhook（{@code getWebhookInfo} 的
+ * {@code url} 为空），否则这里会一直 409 空转、一条 update 都收不到。
  * <p>
- * 一个 bot 只能二选一：设了 webhook 就不能 getUpdates（Telegram 返回 409）。
- * 所以这里用的是专门的测试 bot（没有 webhook），和线上那个走 webhook 的 bot 互不干扰。
- * <p>
- * 入流的字段与 {@code TelegramWebhookController} 完全一致（{@code update} / {@code ts}），
- * 所以下游 {@code UpdateWorker} 及其后的整条链路一行都不用改。
+ * 入流的字段与 {@link com.tele.controller.TelegramWebhookController} 完全一致
+ * （{@code update} / {@code ts}），所以下游 {@code UpdateWorker} 及其后的整条链路
+ * 一行都不用改。那个 controller 也仍然保留着，将来真要切回 webhook，删掉本类即可。
  */
 @Component
-@ConditionalOnProperty(name = "app.polling.enabled", havingValue = "true")
 public class TelegramPollingWorker {
 
     private static final Logger log = LoggerFactory.getLogger(TelegramPollingWorker.class);
