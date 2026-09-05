@@ -37,6 +37,7 @@ import com.tele.entity.CpBotmessageSendInlineItem;
 import com.tele.mapper.CpBotmessageSendInlineItemMapper;
 import com.tele.mapper.CpBotmessageSendInlineMapper;
 import com.tele.mybots.router.TelegramFacade;
+import com.tele.service.InlineItemIdInjector;
 import com.tele.service.InlineQueryService;
 
 import jakarta.annotation.PostConstruct;
@@ -93,6 +94,10 @@ public class InlineUpdateStreamWorker {
 
     @Autowired
     private InlineQueryService inlineQueryService;
+
+    /** KEEP 分支重建实例键盘时用，跟分享时是同一个注入器 */
+    @Autowired
+    private InlineItemIdInjector itemIdInjector;
 
     @Value("${app.inline.update.stream:" + DEFAULT_STREAM + "}")
     private String updateStream;
@@ -271,17 +276,28 @@ public class InlineUpdateStreamWorker {
                 return;
             }
 
+            MarkupDecision decision = decideMarkup(buttontext, trace);
+
             CpBotmessageSendInline upd = new CpBotmessageSendInline();
             upd.setId(inlineId);
             if (StringUtils.isNotBlank(content)) {
                 upd.setContent(content);
             }
-            // 这条分支的 buttontext 是母版级的，写回母版是对的
-            upd.setButtontext(buttontext);
+            /*
+             * 这条分支的 buttontext 是母版级的，写回母版是对的——
+             * 但仅限于本次真的表达了按钮意图。KEEP 表示「不改按钮」，
+             * 照写会把母版的按钮配置抹成空串，且无从恢复。
+             */
+            if (decision.mode() != MarkupMode.KEEP) {
+                upd.setButtontext(buttontext);
+            }
             upd.setSendtime(now);
             inlineMapper.updateById(upd);
 
-            InlineKeyboardMarkup markup = parseMarkup(buttontext, trace);
+            // KEEP：用母版现有按钮重建，让这次编辑把原键盘原样发回去
+            InlineKeyboardMarkup markup = decision.mode() == MarkupMode.KEEP
+                    ? parseKeyboard(main.getButtontext(), trace)
+                    : decision.markup();
 
             int ok = batchEdit(inlineId, content, markup, resolveParseMode(main), trace);
 
@@ -344,7 +360,28 @@ public class InlineUpdateStreamWorker {
                 inlineMapper.updateById(upd);
             }
 
-            InlineKeyboardMarkup markup = parseMarkup(buttontext, trace);
+            MarkupDecision decision = decideMarkup(buttontext, trace);
+
+            /*
+             * KEEP 时要还原这一条实例自己的键盘。实例表没有 buttontext 列，
+             * 能重建它的唯一材料就是「母版串 + 这条实例的 itemId」，
+             * 用的还是分享时那个注入器、那个 itemId。
+             *
+             * 注意这不是「消费端改写上游给的按钮」——上游明确说了别动按钮，
+             * 直接拿母版串会把这条实例的 itemId 抹掉，那才是改写。
+             *
+             * 局限：母版 buttontext 若在分享之后被改过，重建的是「按新母版重新注入」，
+             * 不是客户端当前显示的那份。要严格保真得给实例表加列存实际发出的按钮。
+             */
+            InlineKeyboardMarkup markup;
+            if (decision.mode() == MarkupMode.KEEP) {
+                String rebuilt = main == null
+                        ? null
+                        : itemIdInjector.inject(main.getButtontext(), itemId);
+                markup = parseKeyboard(rebuilt, trace);
+            } else {
+                markup = decision.markup();
+            }
 
             boolean ok = editOne(inlineMessageId, content, markup, resolveParseMode(main), trace);
 
@@ -542,14 +579,72 @@ public class InlineUpdateStreamWorker {
     // ==========================================================
     // 工具
     // ==========================================================
-    private InlineKeyboardMarkup parseMarkup(String buttontext, String trace) {
+    /**
+     * 事件里的 buttontext 表达的三种意图。
+     * <p>
+     * 以前空串和「清空」共用同一种表达，而两者的正确行为正好相反：
+     * Telegram 的 editMessage* 只要不带 {@code reply_markup} 就等于<b>把键盘删掉</b>，
+     * 不是「保持原样」。所以「上游没提按钮」被执行成了「上游要求删掉按钮」——
+     * 而且删键盘是一次合法编辑，返回 200，日志里记的是 success。
+     */
+    private enum MarkupMode {
+        /** 空 / 缺失 / 解析失败：本次不改按钮 */
+        KEEP,
+        /** 显式传 [] 或 [[]]：真的要清空 */
+        CLEAR,
+        /** 正常 JSON：换成这套 */
+        SET
+    }
+
+    private record MarkupDecision(MarkupMode mode, InlineKeyboardMarkup markup) {
+    }
+
+    /**
+     * 判定必须做在 {@link KeyboardUtil#createUserKeyboard} 之外。
+     * 那个方法对空串和 {@code []} 都返回 null，到了 markup 这一层两者已经分不出来了。
+     */
+    private MarkupDecision decideMarkup(String buttontext, String trace) {
+        if (StringUtils.isBlank(buttontext)) {
+            return new MarkupDecision(MarkupMode.KEEP, null);
+        }
+
+        String trimmed = buttontext.trim();
+        if ("[]".equals(trimmed) || "[[]]".equals(trimmed)) {
+            log.info("[INLINE-UPDATE][{}] 按钮显式清空 buttontext={}", trace, trimmed);
+            return new MarkupDecision(MarkupMode.CLEAR, null);
+        }
+
+        InlineKeyboardMarkup markup;
+        try {
+            markup = KeyboardUtil.createUserKeyboard(buttontext);
+        } catch (Exception e) {
+            /*
+             * 解析不了就当成「不改按钮」。原来是返回 null，等于静默降级成清空键盘——
+             * 一个格式错误换来所有已分享消息的按钮全没，代价太大。
+             */
+            log.warn("[INLINE-UPDATE][{}] 按钮解析失败，本次不改按钮 err={}",
+                    trace, safeMsg(e.getMessage()));
+            return new MarkupDecision(MarkupMode.KEEP, null);
+        }
+
+        if (markup == null) {
+            // 解析成功但没有任何有效按钮（比如全是空行），同样按不改处理
+            log.warn("[INLINE-UPDATE][{}] 按钮串没有有效按钮，本次不改按钮", trace);
+            return new MarkupDecision(MarkupMode.KEEP, null);
+        }
+
+        return new MarkupDecision(MarkupMode.SET, markup);
+    }
+
+    /** 只做解析，失败返回 null；给 KEEP 分支重建原键盘用 */
+    private InlineKeyboardMarkup parseKeyboard(String buttontext, String trace) {
         if (StringUtils.isBlank(buttontext)) {
             return null;
         }
         try {
             return KeyboardUtil.createUserKeyboard(buttontext);
         } catch (Exception e) {
-            log.warn("[INLINE-UPDATE][{}] 按钮解析失败 err={}", trace, safeMsg(e.getMessage()));
+            log.warn("[INLINE-UPDATE][{}] 重建原键盘失败 err={}", trace, safeMsg(e.getMessage()));
             return null;
         }
     }
