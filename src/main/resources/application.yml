@@ -37,6 +37,13 @@ app:
     pendingIdleMs: 60000
     pendingScanBatch: 200
     maxDeliveries: 5
+  # long polling 联调开关。默认关闭。
+  # webhook 需要公网 HTTPS（端口只能 443/80/88/8443），本服务是裸 HTTP 且入站被防火墙挡着，
+  # 所以联调走 getUpdates 出站拉取。一个 bot 只能二选一：设了 webhook 就不能 getUpdates。
+  # 不改包也能开：systemd 里加 Environment=APP_POLLING_ENABLED=true
+  polling:
+    enabled: false
+    token-code: bot_token_test
   rate:
     messagesPerSecond: 28
 server:
