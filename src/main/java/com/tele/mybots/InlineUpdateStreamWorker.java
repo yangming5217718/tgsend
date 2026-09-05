@@ -433,10 +433,14 @@ public class InlineUpdateStreamWorker {
      * 而金额、时间、小数这些真实文案里几乎必然带 {@code .} 或 {@code -}。
      * 那种失败还是静默的：{@code shouldInvalidate} 不认 {@code can't parse entities}，
      * 实例状态不变，下一次推送照样全挂。
+     * <p>
+     * 默认值 {@code MarkdownV2}：全项目（含 qbbot 那套生产实现）都用它，legacy markdown
+     * 已被 Telegram 标为过时。字段仍然照读——真遇到某条文案要退回 legacy，改一行数据即可，
+     * 不用发版。
      */
     private String resolveParseMode(CpBotmessageSendInline main) {
         if (main == null || StringUtils.isBlank(main.getParsemode())) {
-            return "markdown";
+            return InlineQueryService.DEFAULT_PARSE_MODE;
         }
         return main.getParsemode().trim();
     }

@@ -41,5 +41,8 @@ public class CpBotmessageSendUser implements Serializable {
     private String exptime;
     private String insid;
     /** Telegram 返回的 message_id，编辑消息时靠它定位 */
+    /** 语法类型：HTML / Markdown / MarkdownV2，库里 NOT NULL DEFAULT 'MarkdownV2' */
+    private String parsemode;
+
     private String sendid;
 }
