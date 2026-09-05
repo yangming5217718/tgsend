@@ -24,7 +24,6 @@ import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
-import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageCaption;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
@@ -284,7 +283,7 @@ public class InlineUpdateStreamWorker {
 
             InlineKeyboardMarkup markup = parseMarkup(buttontext, trace);
 
-            int ok = batchEdit(inlineId, content, markup, trace);
+            int ok = batchEdit(inlineId, content, markup, resolveParseMode(main), trace);
 
             log.info("[INLINE-UPDATE][{}] 母版更新完成 inlineId={} editSuccess={}",
                     trace, inlineId, ok);
@@ -316,6 +315,14 @@ public class InlineUpdateStreamWorker {
                 return;
             }
 
+            /*
+             * parsemode 存在母版上，实例表没有这一列，所以要回查母版。
+             * 查不到就走默认值，不因为拿不到 parsemode 而放弃编辑。
+             */
+            CpBotmessageSendInline main = StringUtils.isBlank(inlineId)
+                    ? null
+                    : inlineMapper.selectById(inlineId);
+
             if (StringUtils.isNotBlank(inlineId)) {
                 CpBotmessageSendInline upd = new CpBotmessageSendInline();
                 upd.setId(inlineId);
@@ -339,7 +346,7 @@ public class InlineUpdateStreamWorker {
 
             InlineKeyboardMarkup markup = parseMarkup(buttontext, trace);
 
-            boolean ok = editOne(inlineMessageId, content, markup, trace);
+            boolean ok = editOne(inlineMessageId, content, markup, resolveParseMode(main), trace);
 
             if (ok) {
                 item.setUpdatetime(now);
@@ -359,7 +366,7 @@ public class InlineUpdateStreamWorker {
     // 编辑
     // ==========================================================
     private int batchEdit(String inlineId, String content, InlineKeyboardMarkup markup,
-                          String trace) {
+                          String parseMode, String trace) {
         Set<String> ids = inlineQueryService.getInlineMessageIds(inlineId);
         if (ids.isEmpty()) {
             log.info("[INLINE-UPDATE][{}] 母版没有有效实例 inlineId={}", trace, inlineId);
@@ -369,7 +376,7 @@ public class InlineUpdateStreamWorker {
         int ok = 0;
         int fail = 0;
         for (String imid : ids) {
-            if (editOne(imid, content, markup, trace)) {
+            if (editOne(imid, content, markup, parseMode, trace)) {
                 ok++;
             } else {
                 fail++;
@@ -382,11 +389,27 @@ public class InlineUpdateStreamWorker {
     }
 
     /**
+     * 取母版声明的 parsemode，跟 {@code InlineQueryService} 发送时用的是同一个字段和同一个默认值。
+     * <p>
+     * 两边必须一致：发送用 legacy markdown、编辑用 MarkdownV2 的话，同一段文案发得出去却编辑不了——
+     * MarkdownV2 把 {@code = . - ! ( ) # + _ * [ ] ~ > |} 全列为保留字符，
+     * 而金额、时间、小数这些真实文案里几乎必然带 {@code .} 或 {@code -}。
+     * 那种失败还是静默的：{@code shouldInvalidate} 不认 {@code can't parse entities}，
+     * 实例状态不变，下一次推送照样全挂。
+     */
+    private String resolveParseMode(CpBotmessageSendInline main) {
+        if (main == null || StringUtils.isBlank(main.getParsemode())) {
+            return "markdown";
+        }
+        return main.getParsemode().trim();
+    }
+
+    /**
      * inline 消息没有 chat_id，只能靠 inline_message_id 定位。
      * content 为空时只换按钮。
      */
     private boolean editOne(String inlineMessageId, String content,
-                            InlineKeyboardMarkup markup, String trace) {
+                            InlineKeyboardMarkup markup, String parseMode, String trace) {
         acquireRateToken();
 
         try {
@@ -394,7 +417,7 @@ public class InlineUpdateStreamWorker {
                 tg.execute(trace, EditMessageCaption.builder()
                         .inlineMessageId(inlineMessageId)
                         .caption(content)
-                        .parseMode(ParseMode.MARKDOWNV2)
+                        .parseMode(parseMode)
                         .replyMarkup(markup)
                         .build());
             } else {
