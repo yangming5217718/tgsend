@@ -275,7 +275,7 @@ public class OutboundSender {
                     row.getExptime(),
                     IDEM_S_MAIN,
                     telegramClient,
-                    () -> updateMainAck(row.getId()),
+                    sentMsgId -> updateMainAck(row.getId(), sentMsgId),
                     err -> updateMainFail(row.getId(), err)
             ));
         } catch (RejectedExecutionException e) {
@@ -319,7 +319,7 @@ public class OutboundSender {
                     row.getExptime(),
                     IDEM_S_OTHER,
                     telegramClient2,
-                    () -> updateOtherAck(row.getId()),
+                    sentMsgId -> updateOtherAck(row.getId(), sentMsgId),
                     err -> updateOtherFail(row.getId(), err)
             ));
         } catch (RejectedExecutionException e) {
@@ -479,7 +479,7 @@ public class OutboundSender {
             String exptime,
             String idemPrefix,
             TelegramClient client,
-            Runnable ackOk,
+            java.util.function.Consumer<Integer> ackOk,
             java.util.function.Consumer<String> ackFail
     ) {
         if (!running.get()) return;
@@ -498,7 +498,11 @@ public class OutboundSender {
                             + " 表=" + table
                             + " ID=" + id
                             + " 群ID=" + chatid);
-            ackOk.run();
+            /*
+             * 幂等命中时没有本次 Telegram 响应，
+             * 传 null 表示「不要覆盖已有 sendid」。
+             */
+            ackOk.accept(null);
             return;
         }
 
@@ -709,7 +713,7 @@ public class OutboundSender {
                 cacheTelegramPhotoFileIdFromMessage(trace, img, sent);
             }
 
-            ackOk.run();
+            ackOk.accept(sent == null ? null : sent.getMessageId());
 
             logInfo(trace,
                     "发送成功并确认"
@@ -920,12 +924,19 @@ public class OutboundSender {
     }
 
     // ========== ACK ==========
-    private void updateMainAck(Long id) {
+    private void updateMainAck(Long id, Integer sentMessageId) {
         UpdateWrapper<CpBotmessageSendUser> uw = new UpdateWrapper<>();
         uw.eq("id", id)
           .set("status", 1)
           .set("returnmsg", "ok")
           .set("sendtime", Utils.getCurrentDateTimeForyyyyMMddHHmmss());
+        /*
+         * sentMessageId 为 null 表示本次没有真的调用 Telegram（幂等命中），
+         * 此时保留原有 sendid，不要覆盖成空。
+         */
+        if (sentMessageId != null) {
+            uw.set("sendid", String.valueOf(sentMessageId));
+        }
         mainMapper.update(null, uw);
     }
 
@@ -941,12 +952,15 @@ public class OutboundSender {
         mainMapper.update(null, uw);
     }
 
-    private void updateOtherAck(Long id) {
+    private void updateOtherAck(Long id, Integer sentMessageId) {
         UpdateWrapper<CpBotmessageSendUserother> uw = new UpdateWrapper<>();
         uw.eq("id", id)
           .set("status", 1)
           .set("returnmsg", "ok")
           .set("sendtime", Utils.getCurrentDateTimeForyyyyMMddHHmmss());
+        if (sentMessageId != null) {
+            uw.set("sendid", String.valueOf(sentMessageId));
+        }
         otherMapper.update(null, uw);
     }
 

@@ -40,4 +40,6 @@ public class CpBotmessageSendUser implements Serializable {
     private String msgid;
     private String exptime;
     private String insid;
+    /** Telegram 返回的 message_id，编辑消息时靠它定位 */
+    private String sendid;
 }
