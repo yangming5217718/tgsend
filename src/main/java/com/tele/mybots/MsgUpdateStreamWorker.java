@@ -30,6 +30,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMa
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import com.tele.common.KeyboardUtil;
+import com.tele.common.MarkdownV2Util;
 import com.tele.common.RedisSlidingWindowRateLimiter;
 import com.tele.common.Utils;
 import com.tele.mybots.router.TelegramFacade;
@@ -300,12 +301,27 @@ public class MsgUpdateStreamWorker {
             if (StringUtils.isNotBlank(content)) {
                 boolean needTryText = false;
 
+                /*
+                 * 必须转义，而且要用跟 OutboundSender 完全相同的实现。
+                 *
+                 * 这条链路的 content 和发送时是同一段文案（开奖播报、期号、金额），
+                 * 发送侧转义了、编辑侧没转义的话，一段发得出去的文案一编辑就
+                 * 400 can't parse entities——MarkdownV2 把 . 和 - 都列为保留字符，
+                 * 而金额和时间里必然带。
+                 *
+                 * caption 和 text 的长度上限不同，各自按各自的截。
+                 */
+                String safeCaption = MarkdownV2Util.normalizeAndEscape(
+                        content, MarkdownV2Util.TG_CAPTION_MAX);
+                String safeText = MarkdownV2Util.normalizeAndEscape(
+                        content, MarkdownV2Util.TG_TEXT_MAX);
+
                 acquireRateToken();
                 try {
                     EditMessageCaption req = EditMessageCaption.builder()
                             .chatId(chatId)
                             .messageId(msgId)
-                            .caption(content)
+                            .caption(safeCaption)
                             .parseMode(ParseMode.MARKDOWNV2)
                             .replyMarkup(markup)
                             .build();
@@ -336,7 +352,7 @@ public class MsgUpdateStreamWorker {
                         EditMessageText req = EditMessageText.builder()
                                 .chatId(chatId)
                                 .messageId(msgId)
-                                .text(content)
+                                .text(safeText)
                                 .parseMode(ParseMode.MARKDOWNV2)
                                 .replyMarkup(markup)
                                 .build();

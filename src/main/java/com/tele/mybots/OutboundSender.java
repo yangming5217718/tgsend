@@ -34,6 +34,7 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.tele.common.KeyboardUtil;
+import com.tele.common.MarkdownV2Util;
 import com.tele.common.RedisSlidingWindowRateLimiter;
 import com.tele.common.Utils;
 import com.tele.entity.CpBotmessageSendUser;
@@ -801,47 +802,9 @@ public class OutboundSender {
 
 
     // ========== MarkdownV2 ==========
+    /** 实现在 {@link MarkdownV2Util}，与 MsgUpdateStreamWorker 编辑路径共用同一份 */
     private static String normalizeAndEscapeForMarkdownV2(String s, int maxLen) {
-        if (s == null) return "";
-        String t = s.replace("\r\n", "\n").replace("\r", "\n");
-
-        if (t.length() > maxLen) {
-            t = t.substring(0, Math.max(0, maxLen - 3)) + "...";
-        }
-
-        return escapeMarkdownV2(t);
-    }
-
-    private static String escapeMarkdownV2(String text) {
-        if (text == null || text.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder(text.length() * 2);
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            switch (c) {
-                case '_':
-                case '*':
-                case '[':
-                case ']':
-                case '(':
-                case ')':
-                case '~':
-                case '>':
-                case '#':
-                case '+':
-                case '-':
-                case '=':
-                case '|':
-                case '{':
-                case '}':
-                case '.':
-                case '!':
-                    sb.append('\\').append(c);
-                    break;
-                default:
-                    sb.append(c);
-            }
-        }
-        return sb.toString();
+        return MarkdownV2Util.normalizeAndEscape(s, maxLen);
     }
 
     // ========== 抢占发送 ==========
