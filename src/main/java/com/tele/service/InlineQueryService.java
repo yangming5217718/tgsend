@@ -63,6 +63,15 @@ public class InlineQueryService {
     private static final Duration INLINE_PRE_DEDUPE_TTL = Duration.ofSeconds(5);
     private static final Duration INLINE_PRE_MAP_TTL = Duration.ofMinutes(10);
 
+    /**
+     * 母版 parsemode 为空时的兜底。
+     * <p>
+     * MarkdownV2 是全项目（含 qbbot 那套生产实现）统一使用的模式，legacy markdown
+     * 已被 Telegram 标为过时。编辑侧 {@code InlineUpdateStreamWorker} 读的是同一个常量——
+     * 两边取值不同的话，同一段文案会发得出去却编辑不了。
+     */
+    public static final String DEFAULT_PARSE_MODE = "MarkdownV2";
+
     private static final int TG_CAPTION_MAX = 1024;
     private static final int TG_TEXT_MAX = 4096;
 
@@ -203,8 +212,15 @@ public class InlineQueryService {
         /*
          * 母版内容是后台配置好的固定文案，parsemode 由母版自己声明，
          * 这里不做转义——转义会把作者写的格式全部打平。
+         *
+         * 默认 MarkdownV2：作者负责把模板写成合法的 MarkdownV2（保留字符自己加 \），
+         * 插值变量由调用方按 qbbot 的做法逐个转义。默认值必须与
+         * InlineUpdateStreamWorker 编辑侧一致，否则同一段文案
+         * 发得出去却编辑不了。
          */
-        String parseMode = StringUtils.isBlank(tpl.getParsemode()) ? "markdown" : tpl.getParsemode().trim();
+        String parseMode = StringUtils.isBlank(tpl.getParsemode())
+                ? DEFAULT_PARSE_MODE
+                : tpl.getParsemode().trim();
         String title = buildTitle(tpl);
 
         if (StringUtils.isNotBlank(tpl.getImgsrc())) {
