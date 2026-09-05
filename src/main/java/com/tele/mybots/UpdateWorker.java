@@ -67,6 +67,8 @@ public class UpdateWorker {
 
     @Autowired private CpInstructionUserMapper cpInstructionUserMapper;
 
+    @Autowired private com.tele.mybots.router.TelegramFacade telegramFacade;
+
     @Value("${app.redis.streams.updates}")
     private String updatesStream;
 
@@ -197,13 +199,13 @@ public class UpdateWorker {
         //inline 输入框查询
         if(!update.path("inline_query").isMissingNode()){
             log.info("【事件分发】收到inline查询 trace={}", trace);
-            inlineQueryService.handleInlineQuery(update.path("inline_query"), trace);
+            inlineQueryService.handleInlineQuery(resolveBotcode(), update.path("inline_query"), trace);
             return;
         }
         //inline 结果被选中并发出，这时才拿得到 inline_message_id
         if(!update.path("chosen_inline_result").isMissingNode()){
             log.info("【事件分发】收到inline选中结果 trace={}", trace);
-            inlineQueryService.handleChosenInlineResult(update.path("chosen_inline_result"), trace);
+            inlineQueryService.handleChosenInlineResult(resolveBotcode(), update.path("chosen_inline_result"), trace);
             return;
         }
         //普通消息
@@ -218,6 +220,18 @@ public class UpdateWorker {
         }
 
         log.warn("【事件分发】未识别Telegram事件 trace={} update={}", trace, update);
+    }
+
+    /**
+     * 入站 update 里没有任何字段标识它来自哪个 bot——webhook 是单一端点，
+     * 两个 bot 打进来长得一模一样。这里先统一回落主 bot。
+     * <p>
+     * 要真正区分，得给每个 bot 配独立的 webhook 路径（例如
+     * {@code /telegram/webhook/{botcode}}）并重设 setWebhook，
+     * 那一步需要人工操作，不在代码范围内。
+     */
+    private String resolveBotcode() {
+        return telegramFacade.defaultBotcode();
     }
 
     private void ack(MapRecord<String, Object, Object> r,String trace) {

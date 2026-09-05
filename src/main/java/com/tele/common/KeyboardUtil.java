@@ -10,6 +10,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
+import org.telegram.telegrambots.meta.api.objects.webapp.WebAppInfo;
 
 public class KeyboardUtil {
 
@@ -113,6 +114,17 @@ public class KeyboardUtil {
 			case "switch_inline_current":
 				// 同上，但只在当前会话里分享
 				button.setSwitchInlineQueryCurrentChat(value);
+				break;
+			case "webapp":
+			case "web_app":
+				/*
+				 * 打开 Mini App。红包、优惠券这类要带 startapp 参数的入口用这个。
+				 * Telegram 要求 web_app 的 URL 必须是 https。
+				 */
+				if (!value.startsWith("https://")) {
+					throw new IllegalArgumentException("web_app URL 必须是 https: " + value);
+				}
+				button.setWebApp(new WebAppInfo(value));
 				break;
 			default: throw new IllegalArgumentException("不支持的按钮类型: " + type);
 		}
