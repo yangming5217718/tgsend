@@ -56,7 +56,8 @@ public class TelegramConfig {
     enum Route { OFFICIAL }
 
     @Bean("telegramClient")
-    public TelegramClient telegramClient(@Value("${bot.config.bot_token}") String token) {
+    public TelegramClient telegramClient(BotTokenSource tokenSource) {
+        String token = tokenSource.token();
         this.probeToken = token;
         return buildSmartClient(token);
     }

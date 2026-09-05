@@ -24,8 +24,8 @@ spring:
           min-idle: 8
 bot:
   config:
-    bot_user_name: lindarkBot
-    bot_token: 6947332073:AAEv2FWNDqHg4MleXWP1CXYLG4_TKBL2B-Q
+    # token 存在 cp_config 表里，这里只写用哪个 code。换 bot 改数据即可，不用改包。
+    token-code: bot_token
 app:
   redis:
     streams:
@@ -43,7 +43,6 @@ app:
   # 不改包也能开：systemd 里加 Environment=APP_POLLING_ENABLED=true
   polling:
     enabled: false
-    token-code: bot_token_test
   rate:
     messagesPerSecond: 28
 server:

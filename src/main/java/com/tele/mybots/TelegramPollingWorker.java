@@ -26,8 +26,6 @@ import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.tele.entity.CpConfig;
-import com.tele.mapper.CpConfigMapper;
 
 import jakarta.annotation.PreDestroy;
 
@@ -77,11 +75,7 @@ public class TelegramPollingWorker {
     private StringRedisTemplate redis;
 
     @Autowired
-    private CpConfigMapper cpConfigMapper;
-
-    /** 从 cp_config 里按这个 code 取 token，默认取测试 bot 那一行 */
-    @Value("${app.polling.token-code:bot_token_test}")
-    private String tokenCode;
+    private BotTokenSource tokenSource;
 
     @Value("${app.redis.streams.updates:tg:updates}")
     private String updatesStream;
@@ -99,13 +93,13 @@ public class TelegramPollingWorker {
             return;
         }
 
-        CpConfig cfg = cpConfigMapper.selectConfig(tokenCode);
-        if (cfg == null || StringUtils.isBlank(cfg.getValue())) {
-            log.error("[POLLING] cp_config 里没有可用的 code={}，轮询不启动", tokenCode);
+        try {
+            this.token = tokenSource.token();
+        } catch (Exception e) {
+            log.error("[POLLING] 取不到 bot token，轮询不启动: {}", safeMsg(e.getMessage()));
             return;
         }
-        this.token = cfg.getValue().trim();
-        this.botTag = this.token.split(":")[0];   // 只记 bot_id，不记 token
+        this.botTag = tokenSource.botId();   // 只记 bot_id，不记 token
 
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -120,7 +114,7 @@ public class TelegramPollingWorker {
         exec.submit(this::loop);
 
         log.info("[POLLING] 启动 tokenCode={} botId={} stream={} allowed_updates={}",
-                tokenCode, botTag, updatesStream, ALLOWED_UPDATES);
+                tokenSource.tokenCode(), botTag, updatesStream, ALLOWED_UPDATES);
     }
 
     @PreDestroy
