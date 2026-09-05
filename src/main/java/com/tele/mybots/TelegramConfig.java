@@ -56,14 +56,10 @@ public class TelegramConfig {
     enum Route { OFFICIAL }
 
     @Bean("telegramClient")
-    public TelegramClient telegramClient(@Value("${bot.config.bot_token}") String token) {
+    public TelegramClient telegramClient(BotTokenSource tokenSource) {
+        String token = tokenSource.token();
         this.probeToken = token;
         return buildSmartClient(token);
-    }
-
-    @Bean("telegramClient2")
-    public TelegramClient telegramClient2(@Value("${bot.config.bot2_token}") String token2) {
-        return buildSmartClient(token2);
     }
 
     // ===================== 核心：官方单线路 client =====================

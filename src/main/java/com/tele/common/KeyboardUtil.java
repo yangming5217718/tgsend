@@ -10,6 +10,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
+import org.telegram.telegrambots.meta.api.objects.webapp.WebAppInfo;
 
 public class KeyboardUtil {
 
@@ -64,7 +65,18 @@ public class KeyboardUtil {
 	private static InlineKeyboardButton buildButton(TelegramButtonConfig config) {
 		if (config == null || StringUtils.isBlank(config.getText())
 				|| StringUtils.isBlank(config.getType())
-				|| StringUtils.isBlank(config.getValue())) {
+				|| StringUtils.isBlank(config.getType())) {
+			return null;
+		}
+
+		String type = config.getType().trim();
+
+		/*
+		 * switch_inline 的 value 允许为空串：
+		 * 空串表示「打开分享面板但不预填文本」，是 Telegram 的合法用法。
+		 * 其余类型仍然必须有值。
+		 */
+		if (StringUtils.isBlank(config.getValue()) && !allowsBlankValue(type)) {
 			return null;
 		}
 
@@ -72,8 +84,7 @@ public class KeyboardUtil {
 				.text(config.getText().trim())
 				.build();
 
-		String type = config.getType().trim();
-		String value = config.getValue().trim();
+		String value = config.getValue() == null ? "" : config.getValue().trim();
 
 		switch (type) {
 			case "url":
@@ -92,9 +103,39 @@ public class KeyboardUtil {
 				}
 				button.setCallbackData(value);
 				break;
+			case "switch_inline":
+				/*
+				 * 让用户选一个会话，把消息分享过去。
+				 * value 是预填进 inline 输入框的文本，
+				 * 我们用它带上母版 id，这样 inline_query 才知道要回什么。
+				 */
+				button.setSwitchInlineQuery(value);
+				break;
+			case "switch_inline_current":
+				// 同上，但只在当前会话里分享
+				button.setSwitchInlineQueryCurrentChat(value);
+				break;
+			case "webapp":
+			case "web_app":
+				/*
+				 * 打开 Mini App。红包、优惠券这类要带 startapp 参数的入口用这个。
+				 * Telegram 要求 web_app 的 URL 必须是 https。
+				 */
+				if (!value.startsWith("https://")) {
+					throw new IllegalArgumentException("web_app URL 必须是 https: " + value);
+				}
+				button.setWebApp(new WebAppInfo(value));
+				break;
 			default: throw new IllegalArgumentException("不支持的按钮类型: " + type);
 		}
 		return button;
+	}
+
+	/**
+	 * switch_inline 类型允许空 value（空串=不预填文本）。
+	 */
+	private static boolean allowsBlankValue(String type) {
+		return "switch_inline".equals(type) || "switch_inline_current".equals(type);
 	}
 
 	public static InlineKeyboardMarkup emptyKeyboard() {

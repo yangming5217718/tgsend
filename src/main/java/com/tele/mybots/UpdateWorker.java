@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.tele.entity.*;
 import com.tele.mapper.*;
 import com.tele.service.CallbackQueryService;
+import com.tele.service.InlineQueryService;
 import com.tele.service.MessageCommandService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -51,14 +52,17 @@ public class UpdateWorker {
 
     private final CallbackQueryService callbackQueryService;
     private final MessageCommandService messageCommandService;
+    private final InlineQueryService inlineQueryService;
 
 
     public UpdateWorker(StringRedisTemplate redis, ObjectMapper om, CallbackQueryService callbackQueryService,
-                        MessageCommandService messageCommandService){
+                        MessageCommandService messageCommandService,
+                        InlineQueryService inlineQueryService){
         this.redis=redis;
         this.om = om;
         this.callbackQueryService=callbackQueryService;
         this.messageCommandService=messageCommandService;
+        this.inlineQueryService=inlineQueryService;
     }
 
     @Autowired private CpInstructionUserMapper cpInstructionUserMapper;
@@ -190,6 +194,18 @@ public class UpdateWorker {
             callbackQueryService.handleCallbackQuery(trace, callback);
             return;
         }
+        //inline 输入框查询
+        if(!update.path("inline_query").isMissingNode()){
+            log.info("【事件分发】收到inline查询 trace={}", trace);
+            inlineQueryService.handleInlineQuery(update.path("inline_query"), trace);
+            return;
+        }
+        //inline 结果被选中并发出，这时才拿得到 inline_message_id
+        if(!update.path("chosen_inline_result").isMissingNode()){
+            log.info("【事件分发】收到inline选中结果 trace={}", trace);
+            inlineQueryService.handleChosenInlineResult(update.path("chosen_inline_result"), trace);
+            return;
+        }
         //普通消息
         if(!update.path("message").isMissingNode()){
             JsonNode msg = update.path("message");
@@ -198,6 +214,7 @@ public class UpdateWorker {
                     msg.path("from").path("id").asText(),
                     msg.path("text").asText(""));
             messageCommandService.executeMessage(update,trace);
+            return;
         }
 
         log.warn("【事件分发】未识别Telegram事件 trace={} update={}", trace, update);
