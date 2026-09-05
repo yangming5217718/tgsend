@@ -26,8 +26,6 @@ bot:
   config:
     bot_user_name: lindarkBot
     bot_token: 6947332073:AAEv2FWNDqHg4MleXWP1CXYLG4_TKBL2B-Q
-    bot2_user_name: lindarktest_bot
-    bot2_token: 8417646289:AAEoRkI4tnjRkS--fEjvuItStJLcHCw7iFk
 app:
   redis:
     streams:

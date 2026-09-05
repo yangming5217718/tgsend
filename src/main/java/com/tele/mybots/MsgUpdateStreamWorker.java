@@ -256,7 +256,6 @@ public class MsgUpdateStreamWorker {
         String trace = newTrace();
 
         try {
-            String botcode = clean(val(r, "botcode"));
             String chatId = clean(val(r, "chatid"));
             String msgIdStr = clean(val(r, "msgid"));
             String content = clean(val(r, "content"));
@@ -264,17 +263,13 @@ public class MsgUpdateStreamWorker {
             String opTime = clean(val(r, "opTime"));
 
             log(trace, "HANDLE rid=" + rid
-                    + " botcode=" + debugValue(botcode)
                     + " chatid=" + debugValue(chatId)
                     + " msgid=" + debugValue(msgIdStr)
                     + " contentLen=" + (content == null ? 0 : content.length())
                     + " hasButton=" + StringUtils.isNotBlank(buttontext)
                     + " opTime=" + debugValue(opTime));
 
-            /*
-             * botcode 允许为空：BotClientRouter 会回落主 bot 并打 WARN。
-             * chatid 和 msgid 缺一不可——没有它们根本定位不到要编辑哪条消息。
-             */
+            // chatid 和 msgid 缺一不可，没有它们定位不到要编辑哪条消息
             if (StringUtils.isBlank(chatId) || StringUtils.isBlank(msgIdStr)) {
                 log(trace, "SKIP missing chatid/msgid rid=" + rid);
                 ackAndDelete(r);
@@ -315,7 +310,7 @@ public class MsgUpdateStreamWorker {
                             .replyMarkup(markup)
                             .build();
 
-                    tg.execute(trace, botcode, req);
+                    tg.execute(trace, req);
                     editedCaption = true;
                     editedMarkup = true;
 
@@ -346,7 +341,7 @@ public class MsgUpdateStreamWorker {
                                 .replyMarkup(markup)
                                 .build();
 
-                        tg.execute(trace, botcode, req);
+                        tg.execute(trace, req);
                         editedText = true;
                         editedMarkup = true;
 
@@ -375,7 +370,7 @@ public class MsgUpdateStreamWorker {
                             .replyMarkup(markup)
                             .build();
 
-                    tg.execute(trace, botcode, req);
+                    tg.execute(trace, req);
                     editedMarkup = true;
                     log(trace, "edit markup ok rid=" + rid + " chatid=" + chatId + " msgid=" + msgId);
                 } catch (TelegramApiException e) {
@@ -408,7 +403,7 @@ public class MsgUpdateStreamWorker {
     // ==========================================================
     // 生产者
     // ==========================================================
-    public void publishMessageUpdate(String botcode, String chatId, Integer msgId,
+    public void publishMessageUpdate(String chatId, Integer msgId,
                                      String content, String buttontext) {
         try {
             if (StringUtils.isBlank(chatId) || msgId == null) {
@@ -417,7 +412,6 @@ public class MsgUpdateStreamWorker {
             }
 
             Map<String, String> msg = Map.of(
-                    "botcode", StringUtils.defaultString(botcode),
                     "chatid", chatId,
                     "msgid", String.valueOf(msgId),
                     "content", StringUtils.defaultString(content),
@@ -426,7 +420,7 @@ public class MsgUpdateStreamWorker {
             );
 
             redis.opsForStream().add(updateStream, msg);
-            log("publishMessageUpdate ok botcode=" + botcode + " chatid=" + chatId + " msgid=" + msgId);
+            log("publishMessageUpdate ok chatid=" + chatId + " msgid=" + msgId);
 
         } catch (Exception e) {
             log("publishMessageUpdate fail err=" + e.getMessage());

@@ -272,8 +272,6 @@ public class InlineUpdateStreamWorker {
                 return;
             }
 
-            String botcode = StringUtils.defaultIfBlank(main.getBotcode(), tg.defaultBotcode());
-
             CpBotmessageSendInline upd = new CpBotmessageSendInline();
             upd.setId(inlineId);
             if (StringUtils.isNotBlank(content)) {
@@ -286,10 +284,10 @@ public class InlineUpdateStreamWorker {
 
             InlineKeyboardMarkup markup = parseMarkup(buttontext, trace);
 
-            int ok = batchEdit(inlineId, content, markup, botcode, trace);
+            int ok = batchEdit(inlineId, content, markup, trace);
 
-            log.info("[INLINE-UPDATE][{}] 母版更新完成 inlineId={} botcode={} editSuccess={}",
-                    trace, inlineId, botcode, ok);
+            log.info("[INLINE-UPDATE][{}] 母版更新完成 inlineId={} editSuccess={}",
+                    trace, inlineId, ok);
 
         } catch (Exception e) {
             log.error("[INLINE-UPDATE][{}] 母版更新失败 inlineId={}", trace, inlineId, e);
@@ -312,7 +310,6 @@ public class InlineUpdateStreamWorker {
 
             String inlineId = item.getInlineId();
             String inlineMessageId = item.getInlineMessageId();
-            String botcode = StringUtils.defaultIfBlank(item.getBotcode(), tg.defaultBotcode());
 
             if (StringUtils.isBlank(inlineMessageId)) {
                 log.warn("[INLINE-UPDATE][{}] 实例没有 inline_message_id，无法编辑 itemId={}", trace, itemId);
@@ -342,7 +339,7 @@ public class InlineUpdateStreamWorker {
 
             InlineKeyboardMarkup markup = parseMarkup(buttontext, trace);
 
-            boolean ok = editOne(botcode, inlineMessageId, content, markup, trace);
+            boolean ok = editOne(inlineMessageId, content, markup, trace);
 
             if (ok) {
                 item.setUpdatetime(now);
@@ -362,7 +359,7 @@ public class InlineUpdateStreamWorker {
     // 编辑
     // ==========================================================
     private int batchEdit(String inlineId, String content, InlineKeyboardMarkup markup,
-                          String botcode, String trace) {
+                          String trace) {
         Set<String> ids = inlineQueryService.getInlineMessageIds(inlineId);
         if (ids.isEmpty()) {
             log.info("[INLINE-UPDATE][{}] 母版没有有效实例 inlineId={}", trace, inlineId);
@@ -372,7 +369,7 @@ public class InlineUpdateStreamWorker {
         int ok = 0;
         int fail = 0;
         for (String imid : ids) {
-            if (editOne(botcode, imid, content, markup, trace)) {
+            if (editOne(imid, content, markup, trace)) {
                 ok++;
             } else {
                 fail++;
@@ -388,20 +385,20 @@ public class InlineUpdateStreamWorker {
      * inline 消息没有 chat_id，只能靠 inline_message_id 定位。
      * content 为空时只换按钮。
      */
-    private boolean editOne(String botcode, String inlineMessageId, String content,
+    private boolean editOne(String inlineMessageId, String content,
                             InlineKeyboardMarkup markup, String trace) {
         acquireRateToken();
 
         try {
             if (StringUtils.isNotBlank(content)) {
-                tg.execute(trace, botcode, EditMessageCaption.builder()
+                tg.execute(trace, EditMessageCaption.builder()
                         .inlineMessageId(inlineMessageId)
                         .caption(content)
                         .parseMode(ParseMode.MARKDOWNV2)
                         .replyMarkup(markup)
                         .build());
             } else {
-                tg.execute(trace, botcode, EditMessageReplyMarkup.builder()
+                tg.execute(trace, EditMessageReplyMarkup.builder()
                         .inlineMessageId(inlineMessageId)
                         .replyMarkup(markup)
                         .build());

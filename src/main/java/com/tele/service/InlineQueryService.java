@@ -87,7 +87,7 @@ public class InlineQueryService {
     // ==========================================================
     // inline_query：用户正在输入
     // ==========================================================
-    public void handleInlineQuery(String botcode, JsonNode inlineQuery, String trace) {
+    public void handleInlineQuery(JsonNode inlineQuery, String trace) {
         String inlineQueryId = inlineQuery.path("id").asText(null);
         if (StringUtils.isBlank(inlineQueryId)) {
             log.warn("[INLINE][{}] INLINE_QUERY 缺少 query id", trace);
@@ -98,20 +98,20 @@ public class InlineQueryService {
         String fromId = inlineQuery.path("from").path("id").asText("");
         String chatType = inlineQuery.path("chat_type").asText("");
 
-        log.info("[INLINE][{}] INLINE_QUERY in botcode={} fromId={} chatType={} query={}",
-                trace, botcode, fromId, chatType, query);
+        log.info("[INLINE][{}] INLINE_QUERY in fromId={} chatType={} query={}",
+                trace, fromId, chatType, query);
 
         try {
             CpBotmessageSendInline tpl = findTemplate(query, trace);
             if (tpl == null) {
-                answerEmpty(botcode, inlineQueryId, trace);
+                answerEmpty(inlineQueryId, trace);
                 return;
             }
 
             /*
              * 预创建实例：必须在构造按钮之前，按钮里要带这个 itemId。
              */
-            Long itemId = preCreateInlineItem(tpl.getId(), botcode, fromId, query, 0, trace);
+            Long itemId = preCreateInlineItem(tpl.getId(), fromId, query, 0, trace);
 
             String buttontext = tpl.getButtontext();
             if (itemId != null && StringUtils.isNotBlank(buttontext)) {
@@ -150,7 +150,7 @@ public class InlineQueryService {
                     .isPersonal(true)
                     .build();
 
-            tg.execute(trace, botcode, answer);
+            tg.execute(trace, answer);
 
             log.info("[INLINE][{}] INLINE_QUERY answered id={} itemId={}", trace, tpl.getId(), itemId);
 
@@ -233,9 +233,9 @@ public class InlineQueryService {
                 .build();
     }
 
-    private void answerEmpty(String botcode, String inlineQueryId, String trace) {
+    private void answerEmpty(String inlineQueryId, String trace) {
         try {
-            tg.execute(trace, botcode, AnswerInlineQuery.builder()
+            tg.execute(trace, AnswerInlineQuery.builder()
                     .inlineQueryId(inlineQueryId)
                     .results(new ArrayList<>())
                     .cacheTime(1)
@@ -249,15 +249,15 @@ public class InlineQueryService {
     // ==========================================================
     // chosen_inline_result：用户已经把消息发出去了
     // ==========================================================
-    public void handleChosenInlineResult(String botcode, JsonNode chosen, String trace) {
+    public void handleChosenInlineResult(JsonNode chosen, String trace) {
         String resultId = chosen.path("result_id").asText("");
         String inlineMessageId = chosen.path("inline_message_id").asText("");
         String fromId = chosen.path("from").path("id").asText("");
         String queryText = chosen.path("query").asText("");
         String now = Utils.getCurrentDateTimeForyyyyMMddHHmmss();
 
-        log.info("[INLINE][{}] CHOSEN in botcode={} resultId={} fromId={} inlineMessageId={}",
-                trace, botcode, resultId, fromId, inlineMessageId);
+        log.info("[INLINE][{}] CHOSEN in resultId={} fromId={} inlineMessageId={}",
+                trace, resultId, fromId, inlineMessageId);
 
         if (StringUtils.isBlank(resultId)) {
             log.warn("[INLINE][{}] CHOSEN 缺少 result_id，丢弃", trace);
@@ -294,7 +294,6 @@ public class InlineQueryService {
                 item = new CpBotmessageSendInlineItem();
                 item.setInlineId(resultId);
                 item.setInlineMessageId(inlineMessageId);
-                item.setBotcode(botcode);
                 item.setFromId(StringUtils.defaultIfBlank(fromId, null));
                 item.setQueryText(clip(queryText, 255));
                 item.setStatus(1);
@@ -306,7 +305,6 @@ public class InlineQueryService {
             } else {
                 item.setInlineId(resultId);
                 item.setInlineMessageId(inlineMessageId);
-                item.setBotcode(botcode);
                 item.setFromId(StringUtils.defaultIfBlank(fromId, null));
                 item.setQueryText(clip(queryText, 255));
                 item.setStatus(1);
@@ -330,7 +328,7 @@ public class InlineQueryService {
     // ==========================================================
     // 预创建
     // ==========================================================
-    private Long preCreateInlineItem(String inlineId, String botcode, String fromId,
+    private Long preCreateInlineItem(String inlineId, String fromId,
                                      String queryText, Integer source, String trace) {
         String now = Utils.getCurrentDateTimeForyyyyMMddHHmmss();
         int src = source == null ? 0 : source;
@@ -372,7 +370,6 @@ public class InlineQueryService {
 
             CpBotmessageSendInlineItem item = new CpBotmessageSendInlineItem();
             item.setInlineId(inlineId);
-            item.setBotcode(botcode);
             item.setFromId(StringUtils.defaultIfBlank(fromId, null));
             item.setQueryText(clip(queryText, 255));
             item.setSource(src);

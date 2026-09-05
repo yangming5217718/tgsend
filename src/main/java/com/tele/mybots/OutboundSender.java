@@ -37,9 +37,7 @@ import com.tele.common.KeyboardUtil;
 import com.tele.common.RedisSlidingWindowRateLimiter;
 import com.tele.common.Utils;
 import com.tele.entity.CpBotmessageSendUser;
-import com.tele.entity.CpBotmessageSendUserother;
 import com.tele.mapper.CpBotmessageSendUserMapper;
-import com.tele.mapper.CpBotmessageSendUserOtherMapper;
 
 import jakarta.annotation.PreDestroy;
 
@@ -82,21 +80,15 @@ public class OutboundSender {
     private static final DateTimeFormatter LOG_TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private static final String IDEM_S_MAIN  = "idem:tg:sent:main:";
-    private static final String IDEM_S_OTHER = "idem:tg:sent:other:";
 
     // ===================== 依赖 =====================
     private final StringRedisTemplate redis;
     private final RedisSlidingWindowRateLimiter limiter;
     private final CpBotmessageSendUserMapper mainMapper;
-    private final CpBotmessageSendUserOtherMapper otherMapper;
 
     @Autowired @Qualifier("telegramClient")
     private TelegramClient telegramClient;
 
-    @Autowired @Qualifier("telegramClient2")
-    private TelegramClient telegramClient2;
-
-    // ===================== 运行状态 =====================
     private volatile int mpsAdaptive;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -122,13 +114,11 @@ public class OutboundSender {
     public OutboundSender(
             StringRedisTemplate redis,
             RedisSlidingWindowRateLimiter limiter,
-            CpBotmessageSendUserMapper mainMapper,
-            CpBotmessageSendUserOtherMapper otherMapper
+            CpBotmessageSendUserMapper mainMapper
     ) {
         this.redis = redis;
         this.limiter = limiter;
         this.mainMapper = mainMapper;
-        this.otherMapper = otherMapper;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -152,7 +142,7 @@ public class OutboundSender {
 
         msgExec.submit(this::msgloop);
 
-        logInfo("发送器启动成功（机器人1+机器人2）"
+        logInfo("发送器启动成功"
                 + " 可用并发=" + inflight.availablePermits()
                 + " 当前每秒发送上限=" + mpsAdaptive
                 + " 全局突发上限=" + BURST_GLOBAL
@@ -207,12 +197,6 @@ public class OutboundSender {
                 for (CpBotmessageSendUser row : mainList) {
                     if (!running.get()) return;
                     sendMain(row);
-                }
-
-                List<CpBotmessageSendUserother> otherList = otherMapper.selectMsgListForUser();
-                for (CpBotmessageSendUserother row : otherList) {
-                    if (!running.get()) return;
-                    sendOther(row);
                 }
 
                 if (!isGlobalCooldown()) {
@@ -290,54 +274,6 @@ public class OutboundSender {
                             + " 异常类型=" + e.getClass().getSimpleName()
                             + " 错误=" + safeMsg(e.getMessage()));
             updateMainFail(row.getId(), "submit_ex " + e.getClass().getSimpleName());
-        }
-    }
-
-    // ========== OTHER 表发送 ==========
-    private void sendOther(CpBotmessageSendUserother row) {
-        if (row == null) return;
-        if (!markOtherSending(row.getId())) return;
-
-        final String trace = newTrace("o");
-        logInfo(trace,
-                "消息已锁定"
-                        + " 表=other"
-                        + " ID=" + row.getId()
-                        + " 群ID=" + row.getChatid()
-                        + " 过期时间=" + row.getExptime());
-
-        try {
-            submitByChat(row.getChatid(), () -> sendCommonSync(
-                    trace,
-                    "other",
-                    row.getId(),
-                    row.getChatid(),
-                    row.getImgsrc(),
-                    row.getContent(),
-                    row.getButtontext(),
-                    row.getMsgid(),
-                    row.getExptime(),
-                    IDEM_S_OTHER,
-                    telegramClient2,
-                    sentMsgId -> updateOtherAck(row.getId(), sentMsgId),
-                    err -> updateOtherFail(row.getId(), err)
-            ));
-        } catch (RejectedExecutionException e) {
-            logWarn(trace,
-                    "提交发送任务被拒绝"
-                            + " 表=other"
-                            + " ID=" + row.getId()
-                            + " 群ID=" + row.getChatid());
-            updateOtherFail(row.getId(), "submit_rejected");
-        } catch (Exception e) {
-            logWarn(trace,
-                    "提交发送任务异常"
-                            + " 表=other"
-                            + " ID=" + row.getId()
-                            + " 群ID=" + row.getChatid()
-                            + " 异常类型=" + e.getClass().getSimpleName()
-                            + " 错误=" + safeMsg(e.getMessage()));
-            updateOtherFail(row.getId(), "submit_ex " + e.getClass().getSimpleName());
         }
     }
 
@@ -916,13 +852,6 @@ public class OutboundSender {
         return mainMapper.update(null, uw) == 1;
     }
 
-    private boolean markOtherSending(Long id) {
-        if (id == null) return false;
-        UpdateWrapper<CpBotmessageSendUserother> uw = new UpdateWrapper<>();
-        uw.eq("id", id).eq("status", 0).set("status", 9);
-        return otherMapper.update(null, uw) == 1;
-    }
-
     // ========== ACK ==========
     private void updateMainAck(Long id, Integer sentMessageId) {
         UpdateWrapper<CpBotmessageSendUser> uw = new UpdateWrapper<>();
@@ -950,30 +879,6 @@ public class OutboundSender {
             uw.set("status", -1);
         }
         mainMapper.update(null, uw);
-    }
-
-    private void updateOtherAck(Long id, Integer sentMessageId) {
-        UpdateWrapper<CpBotmessageSendUserother> uw = new UpdateWrapper<>();
-        uw.eq("id", id)
-          .set("status", 1)
-          .set("returnmsg", "ok")
-          .set("sendtime", Utils.getCurrentDateTimeForyyyyMMddHHmmss());
-        if (sentMessageId != null) {
-            uw.set("sendid", String.valueOf(sentMessageId));
-        }
-        otherMapper.update(null, uw);
-    }
-
-    private void updateOtherFail(Long id, String err) {
-        UpdateWrapper<CpBotmessageSendUserother> uw = new UpdateWrapper<>();
-        uw.eq("id", id).set("returnmsg", err);
-
-        if (shouldRetry(err)) {
-            uw.set("status", 0);
-        } else {
-            uw.set("status", -1);
-        }
-        otherMapper.update(null, uw);
     }
 
     private boolean shouldRetry(String err) {

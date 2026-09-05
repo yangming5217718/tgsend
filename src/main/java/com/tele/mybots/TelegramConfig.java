@@ -61,11 +61,6 @@ public class TelegramConfig {
         return buildSmartClient(token);
     }
 
-    @Bean("telegramClient2")
-    public TelegramClient telegramClient2(@Value("${bot.config.bot2_token}") String token2) {
-        return buildSmartClient(token2);
-    }
-
     // ===================== 核心：官方单线路 client =====================
     private TelegramClient buildSmartClient(String token) {
 
